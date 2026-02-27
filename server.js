@@ -4,7 +4,6 @@ import cors from 'cors';
 import multer from 'multer';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { randomUUID } from 'crypto';
 import path from 'path';
 
 const app = express();
@@ -60,7 +59,7 @@ app.get('/health', (req, res) => {
 
 // Upload profile picture
 // POST /api/upload/profile-pic
-// Body: multipart/form-data with field "file" (image) and optional "userId"
+// Body: multipart/form-data with field "file" (image) and required "userId" (Shopify customer ID)
 app.post('/api/upload/profile-pic', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -68,12 +67,16 @@ app.post('/api/upload/profile-pic', upload.single('file'), async (req, res) => {
     }
 
     const rawUserId = req.query?.userId || req.query?.user_id || req.body?.userId || req.body?.user_id;
-    const userId = (rawUserId || randomUUID()).toString().replace(/\//g, '-');
-    const shopifyCustomerId = (rawUserId || '').toString();
-    console.log(`[Profile Pic] Uploading... Shopify customer ID: ${shopifyCustomerId || '(none)'}`);
+    if (!rawUserId) {
+      return res.status(400).json({ error: 'Missing userId (Shopify customer ID).' });
+    }
+    // Shopify customer IDs look like: gid://shopify/Customer/123
+    // Use a stable S3 key by sanitizing slashes => "gid:--shopify-Customer-123"
+    const userId = rawUserId.toString().replace(/\//g, '-');
+    console.log(`[Profile Pic] Uploading... Shopify customer ID: ${rawUserId}`);
 
-    const ext = path.extname(req.file.originalname) || '.jpg';
-    const key = `${PROFILE_PREFIX}/${userId}${ext}`;
+    const key = `${PROFILE_PREFIX}/${userId}`;
+    const ext = (path.extname(req.file.originalname) || '').toLowerCase();
     // Use mimetype if it's a real image type, else infer from extension (e.g. when client sent application/octet-stream)
     const mime = req.file.mimetype && /^image\//.test(req.file.mimetype)
       ? req.file.mimetype
@@ -85,7 +88,8 @@ app.post('/api/upload/profile-pic', upload.single('file'), async (req, res) => {
         Key: key,
         Body: req.file.buffer,
         ContentType: mime,
-        CacheControl: 'public, max-age=31536000',
+        // Always re-fetch the latest image (avoid stale caches when user overwrites profile pic).
+        CacheControl: 'no-store, max-age=0',
       })
     );
 
@@ -102,7 +106,7 @@ app.post('/api/upload/profile-pic', upload.single('file'), async (req, res) => {
       );
     }
 
-    console.log(`[Profile Pic] Upload success. Shopify customer ID: ${shopifyCustomerId || userId}, key: ${key}`);
+    console.log(`[Profile Pic] Upload success. Shopify customer ID: ${rawUserId}, key: ${key}`);
     console.log(`[Profile Pic] Image URL: ${url}`);
     res.status(201).json({
       success: true,
