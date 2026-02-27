@@ -75,7 +75,9 @@ app.post('/api/upload/profile-pic', upload.single('file'), async (req, res) => {
     const userId = rawUserId.toString().replace(/\//g, '-');
     console.log(`[Profile Pic] Uploading... Shopify customer ID: ${rawUserId}`);
 
-    const key = `${PROFILE_PREFIX}/${userId}`;
+    // Store with an extension so public URL ends with .jpg (stable URL).
+    // We keep ContentType based on uploaded file, so browsers render correctly even if original was png/webp.
+    const key = `${PROFILE_PREFIX}/${userId}.jpg`;
     const ext = (path.extname(req.file.originalname) || '').toLowerCase();
     // Use mimetype if it's a real image type, else infer from extension (e.g. when client sent application/octet-stream)
     const mime = req.file.mimetype && /^image\//.test(req.file.mimetype)
